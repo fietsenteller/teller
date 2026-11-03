@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Verkeerstelling</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a6ef0">
+<style>
+:root{--bg:#f4f5f7;--fg:#111;--card:#fff;--mut:#667;--acc:#1a6ef0;--bd:#d5d8de;--red:#d33;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15171a;--fg:#f2f3f5;--card:#22252a;--mut:#9aa;--bd:#363a42}}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:14px;max-width:640px;margin:0 auto}
+h1{font-size:22px;margin:6px 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+label.chk{display:flex;align-items:center;gap:12px;padding:12px 4px;font-size:19px;border-bottom:1px solid var(--bd)}
+label.chk:last-child{border-bottom:0}
+label.chk input{width:26px;height:26px}
+input[type=text]{width:100%;font-size:18px;padding:12px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)}
+button{font:inherit;cursor:pointer;border:0;border-radius:12px}
+.row{display:flex;gap:8px;margin-top:8px}
+.row input{flex:1}
+.btn{background:var(--acc);color:#fff;padding:14px 18px;font-size:18px;font-weight:600}
+.btn.sec{background:var(--card);color:var(--fg);border:1px solid var(--bd)}
+.btn.red{background:var(--red)}
+.btn.full{width:100%;margin-top:8px}
+.grid{display:grid;gap:12px}
+.big{background:var(--acc);color:#fff;border-radius:18px;min-height:30vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:30px;font-weight:700;user-select:none;-webkit-user-select:none;touch-action:manipulation;width:100%}
+.big:active{filter:brightness(.8);transform:scale(.98)}
+.big .n{font-size:64px;line-height:1.1}
+.big.small{min-height:20vh}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:16px;color:var(--mut)}
+.last{font-size:15px;color:var(--mut);margin:10px 0;min-height:20px}
+textarea{width:100%;height:160px;font-family:ui-monospace,monospace;font-size:12px;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:10px;padding:8px}
+.hide{display:none}
+.tot{font-size:16px}
+</style>
+</head>
+<body>
+<h1>🚦 Verkeerstelling</h1>
+
+<div id="setup">
+  <div class="card">
+    <div style="margin-bottom:8px;color:var(--mut)">Wat ga je tellen?</div>
+    <div id="opts"></div>
+    <div class="row"><input id="extra" type="text" placeholder="Eigen soort toevoegen…"><button class="btn sec" id="addBtn">+</button></div>
+  </div>
+  <div class="card">
+    <input id="loc" type="text" placeholder="Locatie / notitie (optioneel)">
+  </div>
+  <button class="btn full" id="startBtn">Start tellen</button>
+</div>
+
+<div id="count" class="hide">
+  <div class="top"><button class="btn sec" id="edit" style="padding:8px 12px;font-size:15px">⚙︎ Soorten wijzigen</button><span class="tot" id="tot"></span></div><div class="top"><span id="locLbl"></span><span id="geo">📍 …</span></div>
+  <div class="grid" id="btns"></div>
+  <div class="last" id="last"></div>
+  <div class="row">
+    <button class="btn sec" id="undo" style="flex:1">↩︎ Ongedaan</button>
+    <button class="btn" id="finish" style="flex:1">Klaar / download</button>
+  </div>
+</div>
+
+<div id="done" class="hide">
+  <div class="card">
+    <div id="sum" style="font-size:17px;line-height:1.6"></div>
+  </div>
+  <button class="btn full" id="dl">⬇︎ Download .txt</button>
+  <div id="fallback" class="hide card" style="margin-top:12px">
+    <div style="margin-bottom:6px;color:var(--mut)">Download niet beschikbaar — kopieer de tekst:</div>
+    <textarea id="ta" readonly></textarea>
+    <button class="btn sec full" id="copy">Kopieer</button>
+  </div>
+  <button class="btn sec full" id="back">← Terug naar tellen</button>
+  <button class="btn red full" id="reset">Alles wissen &amp; opnieuw</button>
+</div>
+
+<script>
+(function(){
+var DEFAULTS=["Auto","Vrachtwagen","Bus","Motor","Brommer","Fiets","Voetganger"];
+var KEY="verkeerstelling_v1";
+var S={types:[],sel:[],log:[],loc:"",started:null};
+
+function load(){try{var r=localStorage.getItem(KEY);if(r){var o=JSON.parse(r);if(o&&o.log)S=o;}}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
+function $(id){return document.getElementById(id);}
+function pad(n){return String(n).padStart(2,"0");}
+function fmt(ts){var d=new Date(ts);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());}
+function show(id){["setup","count","done"].forEach(function(x){$(x).classList.toggle("hide",x!==id);});}
+
+function renderOpts(){
+  var h="";
+  S.types.forEach(function(t,i){
+    h+='<label class="chk"><input type="checkbox" data-i="'+i+'"'+(S.sel.indexOf(t)>-1?" checked":"")+'><span></span></label>';
+  });
+  $("opts").innerHTML=h;
+  var spans=$("opts").querySelectorAll("span");
+  S.types.forEach(function(t,i){spans[i].textContent=t;spans[i].parentNode.style.borderLeft="8px solid "+col(t);spans[i].parentNode.style.paddingLeft="10px";});
+  $("opts").querySelectorAll("input").forEach(function(cb){
+    cb.onchange=function(){
+      var t=S.types[+cb.dataset.i],k=S.sel.indexOf(t);
+      if(cb.checked&&k<0)S.sel.push(t);if(!cb.checked&&k>-1)S.sel.splice(k,1);save();
+    };
+  });
+}
+function counts(){var c={};S.sel.forEach(function(t){c[t]=0;});S.log.forEach(function(e){c[e.t]=(c[e.t]||0)+1;});return c;}
+
+var PAL=["#1a6ef0","#e67e22","#8e44ad","#d62839","#12a089","#2e9e44","#b8860b","#e91e8c","#5d4037","#455a64"];
+function col(t){var i=S.types.indexOf(t);return PAL[(i<0?0:i)%PAL.length];}
+var pos=null,geoOn=false;
+function setGeo(s){var g=$("geo");if(g)g.textContent=s;}
+function startGeo(){
+  if(geoOn)return;
+  if(!navigator.geolocation){setGeo("📍 niet beschikbaar");return;}
+  try{
+    geoOn=true;setGeo("📍 zoeken…");
+    navigator.geolocation.watchPosition(function(p){
+      pos={la:p.coords.latitude,lo:p.coords.longitude,ac:Math.round(p.coords.accuracy)};
+      setGeo("📍 ±"+pos.ac+" m");
+    },function(e){
+      pos=null;geoOn=false;setGeo("📍 uit / geweigerd");
+    },{enableHighAccuracy:true,maximumAge:5000,timeout:30000});
+  }catch(e){geoOn=false;setGeo("📍 niet beschikbaar");}
+}
+function renderCount(){
+  var c=counts(),h="";
+  S.sel.forEach(function(t,i){h+='<button class="big'+(S.sel.length>3?" small":"")+'" data-i="'+i+'"><span class="n">'+c[t]+'</span><span class="l"></span></button>';});
+  $("btns").innerHTML=h;
+  var ls=$("btns").querySelectorAll(".l");
+  S.sel.forEach(function(t,i){ls[i].textContent=t;});
+  var bb=$("btns").querySelectorAll(".big");
+  S.sel.forEach(function(t,i){bb[i].style.background=col(t);});
+  $("btns").querySelectorAll(".big").forEach(function(b){
+    b.onclick=function(){
+      var t=S.sel[+b.dataset.i];
+      var e={t:t,ts:Date.now()};if(pos){e.la=pos.la;e.lo=pos.lo;e.ac=pos.ac;}
+      S.log.push(e);save();renderCount();
+      if(navigator.vibrate){try{navigator.vibrate(30);}catch(e){}}
+    };
+  });
+  $("tot").textContent="Totaal: "+S.log.length;
+  $("locLbl").textContent=S.loc||"";
+  var l=S.log[S.log.length-1];
+  $("last").textContent=l?("Laatste: "+l.t+" – "+fmt(l.ts).slice(11)):"Nog niets geteld";
+}
+
+function buildTxt(){
+  var c=counts(),L=[];
+  L.push("Verkeerstelling");
+  if(S.loc)L.push("Locatie: "+S.loc);
+  if(S.log.length){L.push("Van: "+fmt(S.log[0].ts));L.push("Tot: "+fmt(S.log[S.log.length-1].ts));}
+  L.push("");L.push("Totalen:");
+  Object.keys(c).forEach(function(t){L.push("  "+t+": "+c[t]);});
+  L.push("  Totaal: "+S.log.length);
+  L.push("");L.push("Datum\tTijd\tSoort\tBreedtegraad\tLengtegraad\tNauwkeurigheid(m)");
+  S.log.forEach(function(e){var f=fmt(e.ts);L.push(f.slice(0,10)+"\t"+f.slice(11)+"\t"+e.t+"\t"+(e.la!=null?e.la.toFixed(6)+"\t"+e.lo.toFixed(6)+"\t"+e.ac:"-\t-\t-"));});
+  return L.join("\n")+"\n";
+}
+
+function renderDone(){
+  var c=counts(),h="";
+  Object.keys(c).forEach(function(t){h+="<div><b></b></div>";});
+  $("sum").innerHTML=h+"<div class='tot' id='sumtot'></div>";
+  var bs=$("sum").querySelectorAll("b");
+  Object.keys(c).forEach(function(t,i){bs[i].textContent=t+": "+c[t];});
+  $("sumtot").textContent="Totaal: "+S.log.length;
+  $("ta").value=buildTxt();
+}
+
+$("addBtn").onclick=function(){
+  var v=$("extra").value.trim();if(!v)return;
+  if(S.types.indexOf(v)<0)S.types.push(v);
+  if(S.sel.indexOf(v)<0)S.sel.push(v);
+  $("extra").value="";save();renderOpts();
+};
+$("startBtn").onclick=function(){
+  if(!S.sel.length){alert("Kies minstens één soort.");return;}
+  S.loc=$("loc").value.trim();S.started=S.started||Date.now();
+  S.sel=S.types.filter(function(t){return S.sel.indexOf(t)>-1;});
+  save();renderCount();show("count");startGeo();
+};
+$("edit").onclick=function(){$("loc").value=S.loc||"";renderOpts();$("startBtn").textContent="Verder tellen";show("setup");};
+$("undo").onclick=function(){S.log.pop();save();renderCount();};
+$("finish").onclick=function(){renderDone();show("done");};
+$("back").onclick=function(){renderCount();show("count");};
+$("reset").onclick=function(){
+  if(!confirm("Alle tellingen wissen?"))return;
+  S.log=[];S.started=null;save();renderOpts();show("setup");
+};
+$("copy").onclick=function(){
+  var ta=$("ta");ta.select();
+  try{navigator.clipboard.writeText(ta.value);}catch(e){try{document.execCommand("copy");}catch(e2){}}
+  $("copy").textContent="Gekopieerd ✓";
+};
+$("dl").onclick=function(){
+  var f=fmt(Date.now());
+  try{
+    var blob=new Blob([buildTxt()],{type:"text/plain;charset=utf-8"});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement("a");
+    a.href=url;a.download="verkeerstelling-"+f.slice(0,10)+"-"+f.slice(11,16).replace(":","")+".txt";
+    document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(url);a.remove();},1000);
+  }catch(e){$("fallback").classList.remove("hide");}
+};
+
+load();
+if(!S.types.length){S.types=DEFAULTS.slice();S.sel=["Auto","Vrachtwagen","Fiets"];}
+$("loc").value=S.loc||"";
+renderOpts();
+if(S.log.length){renderCount();show("count");startGeo();}else{show("setup");}
+})();
+</script>
+</body>
+</html>

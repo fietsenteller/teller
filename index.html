@@ -2,7 +2,8 @@
 <html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Casino Minigames</title>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
 <style>
 :root{--gold:#e6c35c;--red:#d63a32;--ink:#f6f1e1;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -49,8 +50,18 @@ const card=c=>`<span class="card ${[1,2].includes(c/13|0)?'r':''}">${RK[c%13]}<i
 const back='<span class="card back"></span>';
 const shuffle=()=>{const d=[...Array(52).keys()];for(let i=51;i>0;i--){const j=Math.random()*(i+1)|0;[d[i],d[j]]=[d[j],d[i]]}return d};
 
-let peer,conn;
-function init(){lobby()}
+const FB={
+  apiKey:"AIzaSyDWOGqAoAmjMe-dU9JxfkJUg2kaWQGVU5k",
+  authDomain:"casino-game-52218.firebaseapp.com",
+  databaseURL:"https://casino-game-52218-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:"casino-game-52218",
+  appId:"1:660374709199:web:cd9a0a17bf3ce909efe8ba"
+};
+let ref,cid=ls('cid')||(Math.random().toString(36).slice(2)+Date.now().toString(36));ls('cid',cid);
+function init(){
+  if(!FB.databaseURL||FB.databaseURL.startsWith('PLAK')){app.innerHTML='<h1>♠ CASINO ♥</h1><div class="panel">Vul eerst je Firebase-gegevens in bovenaan het script (FB).</div>';return}
+  try{firebase.initializeApp(FB);lobby()}catch(e){lobby('Fout: '+e.message)}
+}
 function lobby(err){
   app.innerHTML=`<h1>♠ CASINO ♥</h1><div class="panel"><p>Twee spelers, één tafel. Kies dezelfde kamercode als je vriend.</p>
   <input id="nm" placeholder="Jouw naam" maxlength="16" value="${esc(ls('nm'))}">
@@ -58,48 +69,26 @@ function lobby(err){
   <button id="go">Aan tafel</button><p class="err">${esc(err||'')}</p></div>`;
   document.getElementById('go').onclick=enter;
 }
-const pid=c=>'casino-'+c.toLowerCase()+'-tafel';
-function sync(){try{ls('sc_'+code,JSON.stringify(R.scores));if(conn&&conn.open)conn.send({t:'st',R})}catch(e){}}
-function onData(m){
-  if(m.t==='hi'){R.names[1]=m.name;sync();render()}
-  else if(m.t==='st'){R=m.R;try{G=R.g?JSON.parse(R.g):null}catch(e){G=null}ls('sc_'+code,JSON.stringify(R.scores));render()}
-}
-function enter(){
+async function enter(){
   const nm=document.getElementById('nm').value.trim(),c=document.getElementById('cd').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(!nm||!c)return lobby('Vul je naam en een kamercode in.');
-  ls('nm',nm);ls('cd',c);code=c;
-  app.innerHTML='<h1>♠ CASINO ♥</h1><p>Verbinden…</p>';
-  if(typeof Peer==='undefined')return lobby('PeerJS kon niet laden. Check je internet.');
-  peer=new Peer(pid(c));
-  peer.on('open',()=>{
-    seat=0;let sc=[0,0];try{sc=JSON.parse(ls('sc_'+c))||[0,0]}catch(e){}
-    R={names:[nm,''],scores:sc,game:'',g:''};G=null;render();
-  });
-  peer.on('connection',cn=>{
-    if(conn&&conn.open){cn.close();return}
-    conn=cn;cn.on('data',onData);
-    cn.on('close',()=>{R.names[1]='';render()});
-  });
-  peer.on('error',e=>{
-    if(e.type==='unavailable-id'){peer.destroy();joinAsGuest(nm,c)}
-    else lobby('Fout: '+e.type);
-  });
+  ls('nm',nm);ls('cd',c);
+  try{
+    const r=firebase.database().ref('rooms/'+c),d=(await r.get()).val();
+    if(!d){await r.set({ids:[cid,''],names:[nm,''],scores:[0,0],game:'',g:''});seat=0}
+    else if(d.ids[0]===cid)seat=0;
+    else if(d.ids[1]===cid)seat=1;
+    else if(!d.ids[1]){await r.update({'ids/1':cid,'names/1':nm});seat=1}
+    else return lobby('Deze tafel is al vol.');
+    code=c;ref=r;
+    r.on('value',s=>{R=s.val();if(!R)return;try{G=R.g?JSON.parse(R.g):null}catch(e){G=null}render()},e=>lobby('Fout: '+e.message));
+  }catch(e){lobby('Fout: '+(e.message||e.code))}
 }
-function joinAsGuest(nm,c){
-  peer=new Peer();
-  peer.on('open',()=>{
-    conn=peer.connect(pid(c),{reliable:true});
-    conn.on('open',()=>{seat=1;conn.send({t:'hi',name:nm})});
-    conn.on('data',onData);
-    conn.on('close',()=>lobby('Verbinding verbroken. Probeer opnieuw.'));
-  });
-  peer.on('error',e=>lobby(e.type==='peer-unavailable'?'Niemand wacht op deze code (of de tafel is vol).':'Fout: '+e.type));
-}
-function commit(g,sc){R.g=JSON.stringify(g);if(sc)R.scores=sc;G=g;sync();render()}
+function commit(g,sc){const p={g:JSON.stringify(g)};if(sc)p.scores=sc;return ref.update(p).catch(e=>alert(e.message))}
 function render(){
   const o=1-seat,n=R.names;
   let h=`<h1>♠ CASINO ♥</h1><div class="score"><span>${esc(n[0])}${seat===0?' (jij)':''}</span><b>${R.scores[0]} – ${R.scores[1]}</b><span>${esc(n[1]||'…')}${seat===1?' (jij)':''}</span></div>`;
-  if(!R.names[1])h+=`<div class="panel">Wacht op je vriend…<br>Kamercode: <b style="color:var(--gold);font-size:22px">${esc(code)}</b></div>`;
+  if(!R.ids[1])h+=`<div class="panel">Wacht op je vriend…<br>Kamercode: <b style="color:var(--gold);font-size:22px">${esc(code)}</b></div>`;
   else if(!R.game)h+=`<div class="panel menu"><div class="status">Kies een spel</div>
     <button data-a="game" data-v="ttt">⭕ Super Boter-kaas-en-eieren</button>
     <button data-a="game" data-v="bj">🂡 Blackjack</button>
@@ -112,7 +101,7 @@ function render(){
 }
 app.onclick=e=>{const b=e.target.closest('[data-a]');if(!b)return;act(b.dataset.a,b.dataset.v)};
 function act(a,v){
-  if(a==='menu'){sel=[];R.game='';R.g='';G=null;sync();return render()}
+  if(a==='menu'){sel=[];return ref.update({game:'',g:''})}
   if(a==='game'||a==='again'){sel=[];return startGame(a==='game'?v:R.game)}
   if(!G)return;
   if(a==='ttt')return ttt(+v);
@@ -128,7 +117,7 @@ function startGame(game){
     if(game==='bj')g={deck,h:[[dl(),dl()],[dl(),dl()]],d:[dl(),dl()],t:0,res:null};
     else g={deck,h:[[dl(),dl(),dl(),dl(),dl()],[dl(),dl(),dl(),dl(),dl()]],dr:[false,false],res:null};
   }
-  R.game=game;R.g=JSON.stringify(g);G=g;sync();render();
+  ref.update({game,g:JSON.stringify(g)});
 }
 
 /* ---------- Super Boter-kaas-en-eieren ---------- */
